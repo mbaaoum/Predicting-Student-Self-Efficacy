@@ -1,0 +1,1274 @@
+---
+title: "Project_8_allItems"
+author: "MohammedBaaoum"
+date: "2022-10-23"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Original dataset 
+```{r}
+data <- read.csv("AEMS-2019.csv")
+```
+#Package/libraries 
+```{r, include=FALSE}
+#install.packages("tidyverse")
+library(tidyverse)
+#install.packages("cli")
+library(cli)
+#install.packages("rlang")
+library(rlang)
+library(psych)# for factor analysis 
+library(psychTools)
+
+library(ggplot2)
+library (descstat)
+library(dplyr)
+
+library(REdaS)# to perform Bartlett’s Test of Sphericity before FA 
+library(GPArotation) # required by FA 
+library(GGally)
+library(lavaan)# used for CFA and SEM modeling 
+library(lavaanPlot)
+library(semPlot)# also use to build graph for CFA, and SEM
+library(caret)
+```
+
+```{r}
+plotTheme <- function() {
+  theme(
+    plot.title = element_text(size = 14, family = "sans", face = "plain", hjust = 0),
+    plot.subtitle=element_text(size = 11, family = "sans", hjust = 0),
+    plot.caption=element_text(size = 10, family = "sans", face = "italic", hjust = 0), 
+    axis.title.x = element_text(size = 10, family = "sans", face = "plain", hjust = 1, vjust = -0.5),
+    axis.title.y = element_text(size = 10, family = "sans", face = "plain", hjust = 1, vjust = 1),
+    axis.text = element_text(size = 9, family = "sans", face = "plain"),
+    panel.background = element_blank(),
+    panel.grid.minor = element_line(colour = "gray"),
+    panel.grid.major = element_line(colour = "gray"),
+    axis.ticks = element_blank(),
+    legend.title = element_text(size = 10, family = "sans"),
+    legend.text = element_text(size = 9, family = "sans"),
+    axis.line = element_blank()
+  )
+}
+```
+
+# Exploratory Data Analysis 
+```{r}
+#describe(data)
+# source:
+#Variable Name: Source
+#1 = School Student
+#2 = School Teacher
+#3 = University Instructor
+#4 = University Student
+
+# to count how many responses by source type 
+data%>% count(data$Source)
+
+# to see how many respondent by group (1=school students, 2= teacher, 3=Unv. instructor, 4= Univ. students)
+ggplot(data, aes(x=Source))+
+  geom_bar(color="darkblue", fill="lightblue")+
+  labs(
+    title = "Responses Per Participant Type",
+    x = "1= School Student, 2 = School Teacher, 3= University Instructor, 4= University Student",
+    y = "Count",
+    color = "Geschlecht", 
+    
+  )
+table(data$Source)
+```
+
+```{r}
+library(naniar)# used to replace missing values (e.g. 99,88, etc) with NAs 
+# summary package for descriptive stat
+#library(summarytools)
+```
+
+# High school students: selection and NA investigation 
+```{r}
+school_student<- data[which(data$Source == "1"),]# select school students only 
+names(school_student)
+summary(school_student)
+
+#The rest of the dataset (W/O Religion variable)
+school_student_rest<- select(school_student,c(1:10, 12:160))
+
+# define NAs values for the rest of the dataset
+NA_values<- c("99", "88", "9")
+school_studnet_rest_NA<- school_student_rest %>%
+  replace_with_na_all(condition = ~.x %in% NA_values)
+
+# Religion variable 
+school_studnt_religion<- select(school_student, 11)
+#dfSummary(school_studnt_religion)
+school_studnt_religion_NA<- school_studnt_religion %>% replace_with_na(replace = list(Religion = 99))
+summary(school_studnt_religion_NA)
+
+
+# Combine the entire dataset with NAs
+school_studnet_NA<- cbind(school_studnt_religion_NA, school_studnet_rest_NA)
+names(school_studnet_NA)
+
+
+
+sapply(school_studnet_NA, function(X) sum(is.na(X)))  # count na per variable
+
+most_missing <- select(school_studnet_NA, c(1:20)) # visualizing the NA for the variable that has missing more than 10% 
+gg_miss_var(most_missing, show_pct = TRUE)
+```
+
+#Remove  variables for teachers and univ. students and only keep school studnets variables 
+```{r}
+names(school_studnet_NA)
+school_student_Variabler<- school_studnet_NA[c(-2, -5:-6, -10:-11,-14:-16, -97:-123)]# deleted:source names, resp. ID, school type, degree year, education, relationship status, children, work experience, and other construct not related to student 
+
+names(school_student_Variabler)
+
+most_missing_schoolStudent <- select(school_student_Variabler, c(1:20)) # visualizing the NA for the variable that has missing more than 10% 
+gg_miss_var(most_missing_schoolStudent, show_pct = TRUE)
+
+# Remove Grade and use age as an alternative. also, remove all other NAs in countery, ethincity, etc 
+
+school_student_cleaning1 <- school_student_Variabler[c(-6)]
+names(school_student_cleaning1)
+
+# Visulize after removing Grade 
+most_missing_clean1 <- select(school_student_cleaning1, c(1:35)) # visualizing the NA for the variable that has missing more than 10% 
+gg_miss_var(most_missing_clean1, show_pct = TRUE)
+
+```
+
+#Omit NAs from school student data
+```{r}
+school_student_cleaning2 <- na.omit(school_student_cleaning1)
+#summary(school_student_cleaning2)
+
+# to check which row and how many obs.  =8 for the two variables with 8
+which(school_student_cleaning2$SR_Problems==8)
+which(school_student_cleaning2$SB_BeMyself==8)
+
+# remove "na = 8" from SB.bemyself, and SR.problems
+
+schoolData<- filter(school_student_cleaning2, 
+                  !SR_Problems==8, 
+                  !SB_BeMyself==8)
+
+```
+
+
+```{r}
+#write.csv(schoolData, "school_data.csv")
+```
+
+# revers coding for some CIO Items
+```{r}
+
+reverse_cols <- c ("CIO_SelfDepend", 
+                   "CIO_SelfDependMost",
+                   "CIO_OwnThing",
+                   "CIO_Identity",
+                   "CIO_JobBetter",
+                   "CIO_Competition",
+                   "CIO_BetterTense",
+                   
+"Gratitude_NotMuch",
+"Gratitude_Time",
+"Empathy_Waste",
+"Empathy_Difficult",
+"SR_GoalSettingHard",
+"SR_GoalPlanTrouble",
+"SR_Distracted",
+"SR_Trouble",
+"SR_Decisions",
+"SR_Change",
+"SR_Problems",
+"SR_Focus",
+"SR_Mistakes",
+"SB_DifferentSchool",
+"SB_NotInterested",
+"SB_FeelDifferent",
+"SB_DontBelong",
+"SB_AcceptanceHard",
+"MM_NoPurpose",
+"SE_Insecure",
+"SE_DontHandle",
+"SE_NotCapable",
+"SE_RarelyAchieve",
+"SE_NewGiveUp",
+"SE_AvoidDifficult",
+"SE_NotTryComplicated")
+
+schoolData[,reverse_cols] <- 5 - schoolData[,reverse_cols]
+str(schoolData)
+summary(schoolData)
+```
+
+
+
+
+
+#Grouping itmes to single construct based on the mean  of each row 
+
+```{r}
+#package for correlation 
+#install.packages("GGally")
+library(GGally)
+names(schoolData)
+library(corrplot)
+
+#SB
+SB_data<- select(schoolData,c(65:82))
+str(SB_data)
+
+ggcorr(SB_data, method = c("everything", "pearson"))
+corPlot(SB_data, cex = 0.5)
+
+SB_mean<- SB_data %>% as_tibble() %>% 
+   mutate(mean_SB = rowMeans(across(where(is.numeric))))
+SB_mean
+
+#PS
+ps_data<- select(schoolData,c(43:54))
+str(ps_data)
+corPlot(ps_data, cex = 0.5)
+ps_mean<- ps_data %>% as_tibble() %>% 
+   mutate(mean_ps = rowMeans(across(where(is.numeric))))
+ps_mean
+
+#ER
+ER_data<- select(schoolData,c(94:101))
+corPlot(ER_data, cex = 0.5)
+
+ER_mean<- ER_data %>% as_tibble() %>% 
+   mutate(mean_ER = rowMeans(across(where(is.numeric))))
+ER_mean
+
+#Empathy 
+Empathy_data <-  select(schoolData,c(102:108))
+corPlot(Empathy_data, cex = 0.5)
+
+Empathy_mean<- Empathy_data %>% as_tibble() %>% 
+   mutate(mean_Empathy = rowMeans(across(where(is.numeric))))
+Empathy_mean
+
+#RS
+RS_data<- select(schoolData,c(83:87))
+corPlot(RS_data, cex = 0.5)
+
+RS_mean<- RS_data %>% as_tibble() %>% 
+   mutate(mean_RS = rowMeans(across(where(is.numeric))))
+RS_mean
+
+#SR
+SR_data<- select(schoolData,c(109:124))
+corPlot(SR_data, cex = 0.5)
+
+SR_mean<- SR_data %>% as_tibble() %>% 
+   mutate(mean_SR = rowMeans(across(where(is.numeric))))
+SR_mean
+
+#Forg
+forgive_data<- select(schoolData,c(8:16))
+corPlot(forgive_data, cex = 0.5)
+
+forgive_mean<- forgive_data %>% as_tibble() %>% 
+   mutate(mean_forgive = rowMeans(across(where(is.numeric))))
+forgive_mean
+
+#MM
+MM_data<- select(schoolData,c(55:64))
+corPlot(MM_data, cex = 0.5)
+
+MM_mean<- MM_data %>% as_tibble() %>% 
+   mutate(mean_MM = rowMeans(across(where(is.numeric))))
+MM_mean
+#SE
+SE_data<- select(schoolData,c(31:42))
+corPlot(SE_data, cex = 0.5)
+
+SE_mean<- SE_data %>% as_tibble() %>% 
+   mutate(mean_SE = rowMeans(across(where(is.numeric))))
+SE_mean
+
+#Gratidute 
+gratitude_data<- select(schoolData,c(88:93))
+corPlot(gratitude_data, cex = 0.5)
+
+gratitude_mean<- gratitude_data %>% as_tibble() %>% 
+   mutate(mean_gratitude = rowMeans(across(where(is.numeric))))
+gratitude_mean
+
+#CIO
+CIO_data<- select(schoolData,c(17:30))
+corPlot(CIO_data, cex = 0.5)
+
+CIO_mean<- CIO_data %>% as_tibble() %>% 
+   mutate(mean_CIO = rowMeans(across(where(is.numeric))))
+
+
+```
+
+#Combined the mean into one dataset 
+```{r}
+
+mean_school.Data<- cbind(CIO_mean$mean_CIO, gratitude_mean$mean_gratitude,MM_mean$mean_MM, SE_mean$mean_SE, forgive_mean$mean_forgive, SR_mean$mean_SR, RS_mean$mean_RS,ER_mean$mean_ER,Empathy_mean$mean_Empathy, ps_mean$mean_ps, SB_mean$mean_SB)
+
+mean_school.Data <- as.data.frame(mean_school.Data)
+
+```
+
+#Rename variables/construct
+```{r}
+names(mean_school.Data)
+
+mean_school.Data<- rename(mean_school.Data,
+       CIO= "V1",
+       GRAT= "V2",
+       MEANMK= "V3",
+       SEFF= "V4",
+       FORG= "V5",
+       SREG= "V6",
+       RELSPIR = "V7",
+       EMOREG= "V8", 
+       EMP= "V9",
+       PSOLV= "V10",
+       SOB="V11") 
+names(mean_school.Data)
+
+
+```
+ 
+# Final data for modeling 
+```{r}
+
+#add deographic data 
+names(schoolData)
+Demo_schoo.data<- select(schoolData, c(3:5))
+names(Demo_schoo.data)
+ 
+school <- cbind (mean_school.Data, Demo_schoo.data)# the entire data set (including demographic and construct)
+str(school)
+```
+
+#Remove participants older than 24 years 
+```{r}
+names(school)
+
+
+school_less24<- subset.data.frame(school, school$Age <= 2)
+table(school_less24$Country)
+names(school_less24)
+
+# Rename Country to Region
+school_rename<- rename(school_less24,
+       Region= "Country")
+names(school_rename)
+
+```
+
+
+# Recoding region for demographic data in the entire data set
+```{r}
+library(tidyverse)
+school_recoding<- school_rename %>%
+                   mutate(Region = recode(Region, 
+                                          "15" = 1,
+                                          "1" = 1,
+                                          "14" = 2,
+                                          "2"= 2,
+                                          "4"= 3,
+                                          "7" = 3, 
+                                          "5" = 4,
+                                          "13" = 4,
+                                          "6" = 5,
+                                          "11"= 5,
+                                          "12" = 5, 
+                                          "8" = 0,
+                                          "10"= 0,))
+names(school_recoding)
+table(school_recoding$Region)
+
+
+```
+
+
+# Remove demographic varibales as suggested by stakeholder 
+```{r}
+
+
+school_model<- (school_recoding)
+names(school_model)
+str(school_model)
+```
+#Variable visulization after taking mean  
+```{r}
+str(school_model)
+par(mfrow=c(2,2))
+hist(school_model$CIO)
+hist(school_model$GRAT)
+hist(school_model$MEANMK)
+hist(school_model$SEFF)
+hist(school_model$FORG)
+hist(school_model$SREG)
+hist(school_model$RELSPIR)
+hist(school_model$EMOREG)
+hist(school_model$EMP)
+hist(school_model$PSOLV)
+hist(school_model$SOB)
+
+
+# Summary statistics for all variables table 
+#Source:https://cran.r-project.org/web/packages/vtable/vignettes/sumtable.html
+library(vtable)
+#st(school_model)
+
+sumtable(school_model,vars = c('CIO','Grat','MM','Self.Efc','Self_Reg', 'Relg.Spit','ER','EMP','PR.S', 'Self.Bel', 'Forg'),
+         summ=c('notNA(x)',
+                'mean(x)',
+                'median(x)',
+                'sd(x)',
+                'min(x)',
+                'max(x)'))
+table(school_model$Region)
+
+
+```
+
+
+# Use Cronbach’s Alpha to check the the items for each factor
+```{r}
+
+forgive<- schoolData[, c("Forgive_BrokenEngagement",
+                                      "Forgive_SecretDisclosure",
+                                      "Forgive_CousinArgument",
+                                      "Forgive_CurseSameReligion",
+                                      "Forgive_CurseDiffReligion",
+                                      "Forgive_Wall",
+                                      "Forgive_Rumor",
+                                      "Forgive_Loss", 
+                                      "Forgive_Car")]
+
+CIO<- schoolData[, c( "CIO_PeerPrize",
+                                   "CIO_PeerWellbeing",
+                                   "CIO_Cooperate",
+                                   "CIO_Family",
+                                   "CIO_RespectGrpDecisions",
+                                   "CIO_SelfDepend",
+                                   "CIO_SelfDependMost",
+                                    "CIO_OwnThing",
+                                   "CIO_Identity",
+                                   "CIO_JobBetter" ,
+                                    "CIO_Competition", 
+                                   "CIO_BetterTense",
+                                   "CIO_PleasureTime", 
+                                   "CIO_ParentsChildren")]
+
+SE<- schoolData[, c("SE_NotTryComplicated",
+                                 "SE_AvoidDifficult",
+                                 "SE_NewGiveUp",
+                                 "SE_NotCapable",
+                                 "SE_DontHandle",
+                                 "SE_PlansCertain",
+                                 "SE_KeepTrying",
+                                 "SE_Unpleasant",
+                                 "SE_RightToWork",
+                                 "SE_TryHarder",
+                                 "SE_RarelyAchieve",
+                                 "SE_Insecure")]
+
+PS<- schoolData[, c("PS_ResultsThink",
+                                 "PS_GatherInfo",
+                                 "PS_IdentifyOptions",
+                                 "PS_ExpressThoughts",
+                                 "PS_GiveReasons",
+                                 "PS_InfoToSupport",
+                                 "PS_MoreThanOne",
+                                 "PS_PlanInfo",
+                                 "PS_SupportDecisions",
+                                 "PS_CompareIdeas",
+                                 "PS_MindOpen",
+                                 "PS_ListenIdeas")]
+
+MM<- schoolData[, c("MM_LifeMeaningful",
+                                              "MM_LifesPurpose",
+                                              "MM_FeelSignificant",
+                                              "MM_Mission",
+                                              "MM_LifeMeaning",
+                                              "MM_UnderstandLife",
+                                              "MM_Purpose",
+                                              "MM_LifeMeaningfulSense",
+                                              "MM_SatisfyingPurpose",
+                                                  "MM_NoPurpose")]
+                  
+
+# #"SB_DontBelong",
+SB<- schoolData[, c("SB_PartOfCommunity",
+                                 "SB_TeachersRespect",
+                                 "SB_TreatedRespect",
+                                "SB_AcceptanceHard",
+                                 "SB_NoticeGood",
+                                 "SB_ProudSchool",
+                                 "SB_LikeMe",
+                                 "SB_OpinionsSeriously",
+                                 "SB_TeachersInterested",
+                                 "SB_CanTalk",
+                                 "SB_PeopleFriendly",
+                                 "SB_Activities",
+                                 "SB_BeMyself",
+                                 "SB_GoodWork",
+                                 "SB_DifferentSchool",
+                                "SB_DontBelong",
+                                "SB_FeelDifferent",
+                                "SB_NotInterested")]
+
+RS<- schoolData[, c("RS_Religion",
+                                 "RS_Prayer",
+                                 "RS_FeelGod",
+                                 "RS_ReligionGrp",
+                                 "RS_DefiningYou")]
+
+
+#""Gratitude_Time"was removed and alpha increased to 0.57
+Gratitude<- schoolData[, c( "Gratitude_Thankful",
+                                         "Gratitude_LongList",
+                                         "Gratitude_NotMuch",
+                                         "Gratitude_Variety" ,
+                                         "Gratitude_Appreciate"
+                                         )]
+
+
+
+ ER <- schoolData[, c("ER_NegativeThink",
+                      "ER_PositiveThink",
+                      "ER_ExpressPositive",
+                      "ER_StressCalm",
+                      "ER_PositiveChange",
+                      "ER_EmotionControl",
+                      "ER_LessNegative",
+                      "ER_NegativeExpress")]
+                                          
+#"Empathy_Waste" was removed and alpha increased to 60
+ Empth <- schoolData[, c("Empathy_Perspective",
+                        "Empathy_TwoSides",
+                        "Empathy_Upset",
+                        "Empathy_Criticizing",
+                        "Empathy_Sides",
+                        "Empathy_Difficult")]
+ 
+ 
+                                                      
+
+SR<- schoolData[, c(  "SR_GoalSettingHard",
+                      "SR_GoalPlanTrouble", 
+                      "SR_Distracted",
+                      "SR_Trouble", 
+                      "SR_Decisions", 
+                      "SR_Change",
+                      "SR_Problems",
+                      "SR_Focus", 
+                      "SR_Mistakes",
+                      "SR_Goals",
+                      "SR_GoalPlan",
+                      "SR_Resolution",
+                      "SR_GoalProgress",
+                      "SR_Willlpower",
+                      "SR_MistakeOnce",
+                      "SR_MistakesLearn")]
+
+                  
+                 
+
+# Calculate Cronbach’s Alpha 
+#par(mfrow=c(3,4))
+alpha(forgive, check.keys = TRUE)$total[1]# 
+alpha(CIO, check.keys = TRUE)$total[1] # 
+alpha(SE, check.keys = TRUE)$total[1]# 
+alpha(PS, check.keys = TRUE)$total[1]# 
+alpha(MM, check.keys = TRUE)$total[1] #
+alpha(SB, check.keys = TRUE)$total[1]#
+alpha(RS, check.keys = TRUE)$total[1]#
+alpha(Gratitude, check.keys = TRUE)$total[1] # 
+alpha(ER, check.keys = TRUE)$total[1]#
+alpha(Empth, check.keys = TRUE)$total[1]# 
+alpha(SR, check.keys = TRUE)$total[1]# 
+
+#CIO HAD 0.24
+#alpha(CIO, check.keys = TRUE)
+
+
+```
+
+
+```{r}
+library(ggplot2)# for correlqtion plot 
+library(ggExtra)
+library(corrplot)
+# Corrplot source: https://cran.r-project.org/web/packages/corrplot/vignettes/corrplot-intro.html
+```
+
+#School_Continuse variabels/construct: this is to check the construct correlation 
+```{r}
+school_continuse_Variable<- select(school_model,1:11 )
+names(school_continuse_Variable)
+
+# Visualization fo the correlation 
+corPlot(school_continuse_Variable, cex = 0.8)
+pairs.panels(school_continuse_Variable, pch = 20)
+correlation_for_factor<- round(cor(school_continuse_Variable), 2)
+#write.csv(correlation_for_factor, "correlation matrix for factors.csv")
+
+#Source:https://r-coder.com/correlation-plot-r/#:~:text=Correlation%20plots%2C%20also%20known%20as,with%20different%20functions%20and%20packages.
+
+
+```
+# ploting 
+```{r}
+boxplot(school_continuse_Variable)
+str(school_continuse_Variable)
+
+# par(mfrow=c(2,2), mai=c(.6,.5,.2,.1))
+# for(i in c(2:18)){
+# plot(school_continuse_Variable [,i],school_continuse_Variable$Self.Efc, xlab=names(school_continuse_Variable)[i],ylab="Self-Efficacy", col=3, pch=20)
+#   
+#  plotting<-  school_continuse_Variable %>%
+#   ggplot( aes(x=school_continuse_Variable$Grat, y=school_continuse_Variable$Self.Efc, fill=school_continuse_Variable)) +
+#     geom_violin() +
+#     scale_fill_viridis(discrete = TRUE, alpha=0.6, option="A") +
+#     theme_ipsum() +
+#     theme(
+#       legend.position="none",
+#       plot.title = element_text(size=11)
+#     ) +
+#     ggtitle("Violin chart") +
+#     xlab("")
+#  plotting
+# }
+```
+
+
+
+
+
+
+
+
+
+# Replaicng index in the data with text for demographic visulization 
+```{r}
+
+#Demo_schoo.data2 <- recode_factor(Demo_schoo.data, '0' = "Female", '1' = "male")
+library(forcats)
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(car)
+
+
+
+names(school_model)
+demographic_data<- select(school_model, 12:13)
+names(demographic_data)
+
+dempgraphic_std<- demographic_data %>%
+                   mutate(Gender = recode_factor(Gender, 
+                                         "0" = "Female", 
+                                         "1" = "Male"))
+
+
+# #dempgraphic_std<- dempgraphic_std %>% # age was eleiminated from the data after only inclduing 18 or below
+#                    mutate(Age = recode_factor(Age, 
+#                                        "1" = "Less than 18", 
+#                                        "2" = " 18_24"))
+                                       
+dempgraphic_std<- dempgraphic_std %>%
+                   mutate(Region = recode_factor(Region,
+                                          "1"=	"Ungrouped",
+                                          "2"	= "Southeast Asia",
+                                          "3"	= "Central Asia",
+                                          "4"= "MENA",
+                                          "5"= "Sub-Saharan Africa",
+                                          "0"= "South Asia"))
+
+
+
+
+plot(dempgraphic_std$Gender)
+gender.count<-table(dempgraphic_std$Gender)
+
+
+
+```
+
+
+#Visulaization for Dempgraphic Variables
+
+```{r}
+library(ggplot2)
+theme_set(theme_classic())
+
+# Histogram on a Categorical variable
+g1 <- ggplot(dempgraphic_std, aes(Region))
+g1 + geom_bar(aes(fill=Gender), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="Gender Across Region")
+
+
+#Gender only visulization
+# Histogram on a Categorical variable
+
+ggplot(data = dempgraphic_std,  aes(x = Gender))+
+  geom_bar(color = 'red')
+
+
+```
+
+# Plotting IVs against DV (self-efficacy)
+```{r}
+#####
+par(mfrow=c(3,4))
+school_model %>% 
+  ggplot(
+    aes(x = CIO, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+school_model %>% 
+  ggplot(
+    aes(x = Grat, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+school_model %>% 
+  ggplot(
+    aes(x = MM, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')   
+school_model %>% 
+  ggplot(
+    aes(x = Self.Bel, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+school_model %>% 
+  ggplot(
+    aes(x = Forg, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+school_model %>% 
+  ggplot(
+    aes(x = Self_Reg, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+school_model %>% 
+  ggplot(
+    aes(x = ER, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+school_model %>% 
+  ggplot(
+    aes(x = EMP, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+school_model %>% 
+  ggplot(
+    aes(x = PR.S, 
+        y= Self.Efc))+
+  geom_point()+
+  stat_smooth(se = 0, method = 'lm')
+```
+
+
+```{r, include=FALSE}
+library(mlbench)
+library(caret)# an aggregator package for performing many machine learning models
+library(e1071)
+library(lime)
+
+library(rsample)      # data splitting 
+
+library(ranger)       # a faster implementation of randomForest
+library(h2o)          # an extremely fast java-based platform
+library(rsq)
+```
+# Further filtiring the data based on age (less than 18 yrs only)
+```{r}
+names(school_model)
+str(school_model)
+head(school_model)
+table(school_model$Age)
+# filter datset based on age less than 18 yrs
+#school_model<- school_model[-c(14,7)]# remove age and religious/spirtuality
+school_model<- school_model[which(school_model$Age == "1"),]
+
+# remove age column 
+school_model<- school_model[-c(14)]# remove age 
+ 
+
+school_model$Region<- as.factor(school_model$Region)
+school_model$Gender<- as.factor(school_model$Gender)
+```
+
+
+# Split data for regression 
+```{r}
+school_modelReg<- school_model# to make the name of the data sepcific for regression 
+str(school_modelReg)
+
+set.seed(12346)
+ind <- sample(2, nrow(school_modelReg), replace = T, prob = c(0.8, 0.2))
+train_reg <- school_modelReg[ind == 1,]
+test_reg <- school_modelReg[ind == 2,]
+
+
+```
+
+#Package used for regression 
+```{r, include=FALSE}
+library(randomForest)
+
+library(DAAG)
+library(MASS)
+library(compositions)
+
+library(car)
+library(PerformanceAnalytics)
+library(olsrr)# to run all possible soltuions for regression: forward, backword, both
+library(performance)# to cehkc linear regression assumption 
+library(glmnet)# for lasso regression 
+install.packages("glmnet", repos = "http://cran.us.r-project.org")
+```
+
+# Regression model 
+```{r}
+
+str(train)
+set.seed(1234)
+reg.1<- lm(Self.Efc~., data = school_model)
+summary(reg.1)
+check_model(reg.1)# to cehck model assumption 
+
+#try all possible steps: this help to try all combination of varaiables and choose best model based on R-sq, R-adjusted, CP
+(all<- ols_step_all_possible(reg.1))
+#write.csv(all, "model evalution_with_school_model_data.csv")
+plot(all)
+
+
+k <- ols_step_best_subset(all)
+
+###Partial R-Sequard 
+rsq.partial(reg.1)
+
+# Try with step AIC: the lower AIC is the better 
+model<- stepAIC(reg.1, direction = "both", trace = F)# both= forward and backword & can be changed "forward" or "backword"
+summary(model)
+
+# Prediction of the mode 
+p<- predict(reg.1, test_reg)
+
+###########Regtression without religion#######################
+
+reg.2<- lm(Self.Efc~.-Relg.Spit, data = train_reg)
+summary(reg.2)
+
+
+```
+
+```{r}
+# to run modelLookUp function to check which paramneter a model has
+install.packages(c("pkg1", "pkg2"), dependencies = TRUE)
+library(pkg)
+```
+
+# Split data to training and testing and select variables significant based on regression 
+```{r}
+set.seed(1234)
+ind <- sample(2, nrow(school_model), replace = T, prob = c(0.8, 0.2))
+train <- school_model[ind == 1,]
+test <- school_model[ind == 2,]
+
+#names(school_model)
+#write.csv(school_model, "school_model_afterVARNameChange.csv")
+#write.csv(school_model, "school_model.csv")
+```
+
+
+# cv SET UP 
+```{r}
+# Regression Tree
+# Bagging
+set.seed(1234)
+cvcontrol <- trainControl(method="cv", #here used CV (used with regression or classification)
+                          number = 10,
+                          allowParallel=TRUE)
+
+```
+
+```{r}
+#Lasso  regression 
+#sources:
+#https://www.datacareer.ch/blog/ridge-and-lasso-in-r/
+#http://www.sthda.com/english/articles/37-model-selection-essentials-in-r/153-penalized-regression-essentials-ridge-lasso-elastic-net/
+#https://bookdown.org/tpinto_home/Regularisation/lasso-regression.html
+#https://github.com/tirthajyoti/R-stats-machine-learning/blob/master/Stepwise%20regression%2C%20LASSO%2C%20Elastic%20Net.R
+#https://www.pluralsight.com/guides/linear-lasso-and-ridge-regression-with-r
+
+# Spliting training set into two parts based on outcome: 75% and 25%
+# Split data into train and test sets
+ind <- sample(2, nrow(school_model), replace = T, prob = c(0.8, 0.2))
+x.train <- school_model[ind==1, ]
+x.test <- school_model[ind==2, ]
+
+y.train <- school_model[ind==1,]
+y.test <- school_model[ind==2,]
+
+
+
+
+
+train_rows <- sample(1:n, n/2)
+x.train <- x[train_rows, ]
+x.test <- x[-train_rows, ]
+
+y.train <- y[train_rows]
+y.test <- y[-train_rows]
+#######
+
+cv_lasso<- cv.glmnet(train, train$Self.Efc, alpha = 1)
+lasso2<- glmnet()
+set.seed(1234)
+lasso <- train(Self.Efc ~., 
+             data=train,
+             method="lasso",
+             trControl=cvcontrol)
+
+plot(lasso)
+
+plot(varImp(lasso))
+summary(lasso)
+
+lasso$
+
+# Plot, RMSE, R-square
+ba <- predict(lasso,  test)# now do test/predict
+plot(ba ~ test$Self.Efc, main = 'Predicted Vs Actual MEDV - Test data')
+sqrt(mean((test$Self.Efc - lasso)^2))
+cor(test$Self.Efc, lasso) ^2
+
+str(test)
+
+
+#####based on class multivariate ###########################3
+#column 8 is the response variable
+#source: https://rstudio-pubs-static.s3.amazonaws.com/511869_1ac4119203c6450b8e97c5058a52fb0c.html#lasso-regression
+library(glmnet)# for lasso regression 
+#install.packages("glmnet", repos = "http://cran.us.r-project.org")
+any(is.na(school_model))
+names(school_model)
+y<-as.data.frame(school_model[,4]) 
+x<-as.data.frame(school_model[,-4])
+
+
+
+
+
+## Last attempt 
+str(train)
+set.seed(1234)
+tune_lass<- expand.grid(alpha = 1,
+                        lambda = seq(0.0001, 1, length = 5))
+set.seed(1234)
+lasso<- train(Self.Efc~., 
+              train,
+              method = 'glmnet',
+              tuneGrid = tune_lass,
+              trControl = cvcontrol)
+plot(lasso)
+lasso# i still have some NAs in the resutls, there are some error i nthe mdoel 
+plot(lasso$finalModel, xvar = 'lambda', label = T)
+plot(lasso$finalModel, xvar = 'dev', label = T)
+plot(varImp(lasso))
+####
+```
+
+
+#DT-regession using bagging 
+```{r}
+#-Gender -Relg.Spit -EMP 
+set.seed(1234)
+bag <- train(SEFF ~ ., 
+             data=train,
+             method="treebag",
+             trControl=cvcontrol,
+             importance=TRUE)# this to bring important variabeles 
+
+plot(varImp(bag))
+# install.packages("ISLR")
+# library(ISLR)
+# install.packages("rpart")
+# library(rpart)
+
+
+
+# Plot, RMSE, R-square
+set.seed(1234)
+ba <- predict(bag,  test)# now do test/predict
+plot(ba ~ test$SEFF, main = 'Predicted Vs Actual MEDV - Test data')
+sqrt(mean((test$SEFF - ba)^2))
+cor(test$SEFF, ba) ^2
+
+
+```
+
+
+```{r}
+##Part 2: Random forest 
+# RF: same as DT except change method =RF #-Gender -Relg.Spit -EMP
+set.seed(1234)
+forest <- train(SEFF ~ .,  
+                data=train,
+                method="rf", # change the method to RF
+                trControl=cvcontrol,
+                tuneLength= 12,
+                importance=TRUE)
+# Plot mtry and find the best value
+plot(forest)
+forest$bestTune
+
+# re-run the model using (mtry=2)
+set.seed(1234)
+forest_mtry <- train(SEFF ~ .,  
+                data=train,
+                method="rf", # change the method to RF
+                trControl=cvcontrol,
+                tuneLength= 3,
+                importance=TRUE)
+
+# plot important variabels 
+plot(varImp(forest_mtry))
+
+
+
+
+# Plot, RMSE, R-square based on test data 
+set.seed(1234)
+rf <-  predict(forest_mtry,  test)
+plot(rf ~ test$SEFF, main = 'Predicted Vs Actual MEDV - Test data')
+sqrt(mean((test$SEFF - rf)^2))
+cor(test$SEFF, rf) ^2
+
+head(rf)
+head(school_modelReg$Self.Efc)
+# Explain predictions: ML is black box and this give more description about inside
+explainer <- lime(test[1:3,], forest, n_bins = 5)
+explanation <- explain( x = test[1:3,], 
+                        explainer = explainer, 
+                        n_features = 5)
+plot_features(explanation)
+plot_explanations(explanation)
+
+
+install.packages("rattle")
+library(rattle)
+fancyRpartPlot(forest$finalModel)
+
+plot(forest$finalModel)
+
+###Random forest based on class note############
+
+library(randomForest)
+set.seed(1)
+bag.boston=randomForest(Self.Efc~.,data=train,mtry=9,trControl=cvcontrol,
+importance=TRUE)
+```
+
+# Part 3: xgbtree
+
+```{r}
+# Boosting#-Gender -Relg.Spit -EMP
+set.seed(1234)
+boo <- train(SEFF ~ ., 
+             data=train,
+             method="xgbTree", 
+             trControl=cvcontrol,
+             tuneGrid = expand.grid(nrounds = 500,# here is the difference, xgbtree has 7 parameters (play with max_depth, eta, gamma)
+                                    max_depth = 6,# this is how long the tree is (deafult =6)
+                                    eta = 0.2,# learning rate (deafult =0.3)
+                                    gamma = 2.1,# used to avoiding overfit (deafult =0)
+                                    colsample_bytree = 1,
+                                    min_child_weight = 1,
+                                    subsample = 1))
+plot(varImp(boo))
+
+# Plot, RMSE, R-square
+bo <-  predict(boo,  test)
+plot(bo ~ test$SEFF, main = 'Predicted Vs Actual MEDV - Test data')
+sqrt(mean((test$SEFF - bo)^2))
+cor(test$SEFF, bo) ^2
+
+```
+```{r}
+library(nnet)
+library(devtools)
+
+```
+
+```{r}
+#Source: https://beckmw.wordpress.com/2013/11/14/visualizing-neural-networks-in-r-update/
+library(devtools)
+library(nnet)
+install.packages("NeuralNetTools")
+
+library(NeuralNetTools)
+
+# Neural network# -Gender -Relg.Spit -EMP
+set.seed(1234)
+NN <- train(SEFF ~ ., 
+             data=train,
+             method="nnet", 
+             trControl=cvcontrol,
+             linout=TRUE,
+             trace = FALSE)
+
+
+plot(varImp(NN))
+
+plot(NN$finalModel)
+plot.nnet(NN)
+plotnet(NN)
+
+
+# Plot, RMSE, R-square
+NN_pred <-  predict(NN,  test)
+#plot(NN ~ test$Self.Efc, main = 'Predicted Vs Actual MEDV - Test data')
+sqrt(mean((test$SEFF - NN_pred)^2))
+cor(test$SEFF, NN_pred) ^2
+
+```
+
+# using VIP fucntion to combine all importance variables 
+```{r}
+library(vip)# to visulzie important variabels from different models 
+library(gridExtra)
+```
+
+```{r}
+
+# Construct ggplot2-based VIPs for each model 
+p1 <- vip(bag)  # CART-like decision tree
+p2 <- vip(forest, width = 0.5, aesthetics = list(fill = "green3"))   # RF
+#> Warning in vip.default(rfo, width = 0.5, aesthetics = list(fill = "green3")):
+#> Arguments `width`, `alpha`, `color`, `fill`, `size`, and `shape` have all been
+#> deprecated in favor of the new `mapping` and `aesthetics` arguments. They will
+#> be removed in version 0.3.0.
+p3 <- vip(boo, aesthetics = list(col = "purple2"))   # GBM
+p4 <- vip(NN, aesthetics = list(col = "purple3"))   # GBM
+
+
+# Display all three plots side by side
+grid.arrange(p1, p2, p3,p4, ncol = 2, theme = plotTheme())
+
+grid.arrange(p1, p2, p3, p4, ncol = 2, theme = plotTheme())
+
+p1 <- p1+plotTheme()
+p2 <- p2+plotTheme()
+p3 <- p3+plotTheme()
+p4 <- p4+plotTheme()
+# Arrange the plots using grid.arrange
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+```{r}
+p1 <- vip(bag)+ ggtitle("Bagging") + theme(plot.title = element_text(hjust = 0.5))  
+p2 <- vip(forest)+ ggtitle("Random Forest") + theme(plot.title = element_text(hjust = 0.5)) 
+p3 <- vip(boo)+ ggtitle("XGBoost") + theme(plot.title = element_text(hjust = 0.5)) 
+p4 <- vip(NN)+ ggtitle("Neural Network") + theme(plot.title = element_text(hjust = 0.5)) 
+
+p1 <- p1+plotTheme()
+p2 <- p2+plotTheme()
+p3 <- p3+plotTheme()
+p4 <- p4+plotTheme()
+# Arrange the plots using grid.arrange
+All_model <- grid.arrange(p1, p2, p3, p4, ncol = 2)
+
+ggsave("All_model.png", All_model)
+ggsave("p2.png", p2)
+
+```
+
+
+```{r}
+library(reshape2)
+names(school_model)
+school_model_corr <- school_model %>% 
+  select(c(-12, -13))
+
+# Compute the correlation matrix
+corr_matrix <- round(cor(school_model_corr),2)
+
+# Reshape the correlation matrix to long format
+corr_data2 <- melt(corr_matrix)
+head(corr_data2)
+
+corr_data <- melt(corr_matrix_filtered) %>%
+  rename(Var1 = Var1, Var2 = Var2, Correlation = value) 
+
+# Create the correlation plot
+correlation_plot <- ggplot(data = corr_data, aes(x = Var1, y = Var2, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0, limits = c(-1, 1), na.value = "gray", name = "Correlation") +
+  labs(title = "Pearson Correlation Matrix") +
+  theme_minimal()+
+  plotTheme()+
+  theme(# to remove Var 1 and Var 2 from the plot on x & y
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank())
+
+# Display the correlation plot
+print(correlation_plot)
+
+ggsave("correlation_plot.png", correlation_plot, , bg = "white")
+```
+
+# to plot models performance 
+```{r}
+# Create a data frame with model names and performance metrics
+model_names <- c("Bagging", "Random Forest", "XGBoost", "Neural Network")
+r_squared_train <- c(0.3066, 0.3861, 0.3501, 0.3622)
+rmse_train <- c(0.3411, 0.3229, 0.3307, 0.3267)
+r_squared_test <- c(0.3107, 0.3891, 0.3661, 0.3906)
+rmse_test <- c(0.3446, 0.3267, 0.3317, 0.3231)
+
+# Create a data frame for the model performance metrics
+performance_df <- data.frame(Model = rep(model_names, 2),
+                             Metric = rep(c("R_Squared", "RMSE"), each = length(model_names)),
+                             Value = c(r_squared_train, rmse_train, r_squared_test, rmse_test),
+                             Dataset = rep(c("Training", "Testing"), each = length(model_names)))
+
+# Plot comparing model performance
+performance_plot <- ggplot(performance_df, aes(x = Model, y = Value, color = Dataset, group = Dataset, linetype = Metric)) +
+  geom_line() +
+  labs(title = "Model Performance Comparison", y = "Metric Value") +
+  scale_color_manual(values = c("Training" = "blue", "Testing" = "red")) +
+  scale_linetype_manual(values = c("R_Squared" = "solid", "RMSE" = "dashed")) +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+# Display the performance plot
+print(performance_plot)
+```
+
+
